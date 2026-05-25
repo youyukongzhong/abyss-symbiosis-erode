@@ -1,16 +1,20 @@
-# 深渊共生：蚀变 - Web MVP
+# 深渊共生：蚀变 - Godot MVP
 
-这是根据 `深渊共生蚀变_游戏设计文档.docx` 制作的第一版可玩原型。当前版本优先跑通设计文档第 11 章的 MVP 闭环：俯视角移动射击、敌人、击杀掉落、三选一变异、侵蚀度、胃袋负重、撤离点和撤离尸潮。
+这是根据 `深渊共生蚀变_游戏设计文档.docx` 制作的 Godot 4.x 第一版可玩原型。当前版本优先跑通设计文档第 11 章的 MVP 闭环：俯视角移动射击、敌人、击杀掉落、三选一变异、侵蚀度、胃袋负重、撤离点和撤离尸潮。
 
 ## 运行方式
 
-推荐在项目目录运行：
+主工程入口是 `project.godot`。本机已下载 Godot 4.6.3 到：
 
 ```powershell
-npm start
+D:\Code\Godot\4.6.3\Godot_v4.6.3-stable_win64.exe
 ```
 
-然后访问 `http://127.0.0.1:4173/`。也可以直接打开 `index.html` 游玩。
+可以双击该程序，再打开本项目目录 `D:\Code\abyss-symbiosis-erode`；也可以在项目目录运行：
+
+```powershell
+& "D:\Code\Godot\4.6.3\Godot_v4.6.3-stable_win64_console.exe" --path .
+```
 
 ## 操作
 
@@ -35,4 +39,4 @@ npm start
 
 ## 设计边界
 
-本机未检测到 Godot，因此这个版本先用无依赖 Web 技术完成“能玩”的 0 到 1 原型。代码按系统拆分为数据、输入、实体、战斗、进化、撤离和渲染逻辑，后续可以迁移到 Godot 4 的节点组合架构。
+项目保留了早期 Web 原型文件作为玩法参考，但主交付已切换为 Godot 4 工程：`project.godot`、`scenes/`、`scripts/`。
