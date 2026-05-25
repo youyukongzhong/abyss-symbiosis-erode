@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>深渊共生：蚀变 - MVP</title>
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="game" aria-label="深渊共生蚀变游戏画面"></canvas>
+
+      <section class="hud hud-top">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <span>深渊共生：蚀变</span>
+        </div>
+        <div class="hud-metrics">
+          <div class="meter">
+            <span class="meter-label">生命</span>
+            <span class="meter-track"><span id="hpBar" class="meter-fill hp"></span></span>
+            <span id="hpText" class="meter-value">100/100</span>
+          </div>
+          <div class="meter">
+            <span class="meter-label">侵蚀</span>
+            <span class="meter-track"><span id="erosionBar" class="meter-fill erosion"></span></span>
+            <span id="erosionText" class="meter-value">0%</span>
+          </div>
+          <div class="meter">
+            <span class="meter-label">经验</span>
+            <span class="meter-track"><span id="xpBar" class="meter-fill xp"></span></span>
+            <span id="xpText" class="meter-value">0/60</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="hud hud-bottom">
+        <div class="organ-row" id="organSlots"></div>
+        <div class="bag-panel">
+          <span>胃袋</span>
+          <strong id="bagText">0/10</strong>
+          <span id="geneText">基因 0</span>
+        </div>
+      </section>
+
+      <section class="mission-panel">
+        <div id="missionTitle">寻找变异物质</div>
+        <strong id="missionTimer">--</strong>
+      </section>
+
+      <section id="startOverlay" class="overlay active">
+        <div class="start-panel">
+          <p class="kicker">零号实验体上线</p>
+          <h1>深渊共生：蚀变</h1>
+          <p>深入地下设施，吞噬血肉，承受侵蚀，然后活着撤离。</p>
+          <button id="startButton" type="button">开始实验</button>
+        </div>
+      </section>
+
+      <section id="mutationOverlay" class="overlay">
+        <div class="mutation-panel">
+          <p class="kicker">基因链失稳</p>
+          <h2>选择一个器官移植</h2>
+          <div id="mutationCards" class="mutation-cards"></div>
+        </div>
+      </section>
+
+      <section id="resultOverlay" class="overlay">
+        <div class="result-panel">
+          <p id="resultKicker" class="kicker">实验结束</p>
+          <h2 id="resultTitle">撤离成功</h2>
+          <p id="resultBody"></p>
+          <button id="restartButton" type="button">再次进入深渊</button>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="src/game.js"></script>
+  </body>
+</html>
