@@ -18,7 +18,7 @@ var weak_angle := 0.0
 var weak_broken := false
 var hit_flash := 0.0
 
-func configure(kind: String, is_elite := false) -> void:
+func configure(kind: String, is_elite := false, threat := 0.0) -> void:
 	enemy_type = kind
 	elite = is_elite
 	weak_angle = randf_range(0.0, TAU)
@@ -49,6 +49,13 @@ func configure(kind: String, is_elite := false) -> void:
 		damage *= 1.35
 		xp_value = int(round(float(xp_value) * 1.8))
 		radius *= 1.22
+
+	var threat_hp := 1.0 + pow(maxf(0.0, threat), 1.18) * 0.18
+	var threat_damage := 1.0 + pow(maxf(0.0, threat), 1.12) * 0.075
+	var threat_speed := 1.0 + minf(0.22, threat * 0.025)
+	max_hp *= threat_hp
+	damage *= threat_damage
+	move_speed *= threat_speed
 
 	hp = max_hp
 	queue_redraw()

@@ -5,10 +5,16 @@ const ENEMY_SCENE := preload("res://scenes/Enemy.tscn")
 const PROJECTILE_SCENE := preload("res://scenes/Projectile.tscn")
 const LOOT_SCENE := preload("res://scenes/Loot.tscn")
 const MUTATION_DATA := preload("res://scripts/mutation_data.gd")
+const MINIMAP_SCRIPT := preload("res://scripts/minimap.gd")
 
 const WORLD_SIZE := Vector2(3200.0, 2200.0)
 const EXIT_POSITION := Vector2(2960.0, 1940.0)
 const EXIT_RADIUS := 94.0
+const BASE_EXTRACT_SECONDS := 95.0
+const MIN_EXTRACT_LEVEL := 3
+const MIN_EXTRACT_GENES := 45
+const MAX_NORMAL_ENEMIES := 46
+const MAX_EXTRACTION_ENEMIES := 72
 
 @onready var world_layer: Node2D = $World
 @onready var loot_layer: Node2D = $LootLayer
@@ -28,9 +34,11 @@ var hallucinations: Array = []
 var slashes: Array = []
 var patches: Array = []
 var props: Array = []
+var cover_rects: Array = []
 
 var state := "playing"
 var erosion := 0.0
+var run_time := 0.0
 var spawn_timer := 0.8
 var hallucination_timer := 5.0
 var extraction_active := false
@@ -44,6 +52,15 @@ var mutation_cards: HBoxContainer
 var result_panel: PanelContainer
 var result_title: Label
 var result_body: Label
+var shelter_panel: PanelContainer
+var shelter_body: Label
+var minimap: Control
+
+var banked_genes := 0
+var shelter_runs := 0
+var upgrade_hp_level := 0
+var upgrade_speed_level := 0
+var upgrade_bag_level := 0
 
 func _ready() -> void:
 	rng.randomize()
@@ -52,20 +69,22 @@ func _ready() -> void:
 	camera.limit_right = int(WORLD_SIZE.x)
 	camera.limit_bottom = int(WORLD_SIZE.y)
 	_create_ui()
-	_new_run()
+	_show_shelter()
 
 func _physics_process(delta: float) -> void:
 	if player == null:
+		_update_ui()
 		return
 
 	player.aim_position = get_global_mouse_position()
 
-	if state == "mutation" or state == "game_over":
+	if state == "mutation" or state == "game_over" or state == "shelter":
 		_update_camera()
 		_update_ui()
 		queue_redraw()
 		return
 
+	run_time += delta
 	message_timer = maxf(0.0, message_timer - delta)
 	erosion = clampf(erosion + delta * (0.08 if extraction_active else 0.035), 0.0, 100.0)
 	player.current_erosion = erosion
@@ -95,7 +114,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_E and state == "playing":
 			if player.global_position.distance_to(EXIT_POSITION) <= EXIT_RADIUS + player.radius:
-				_start_extraction()
+				if _can_extract():
+					_start_extraction()
+				else:
+					message_timer = 1.4
 
 func _draw() -> void:
 	_draw_floor()
@@ -107,21 +129,24 @@ func _draw() -> void:
 func _new_run() -> void:
 	state = "playing"
 	erosion = 0.0
+	run_time = 0.0
 	spawn_timer = 0.8
 	hallucination_timer = 5.0
 	extraction_active = false
-	extraction_time = 60.0
+	extraction_time = BASE_EXTRACT_SECONDS
 	extraction_spawn_timer = 0.0
 	puddles.clear()
 	hallucinations.clear()
 	slashes.clear()
 	patches.clear()
 	props.clear()
+	cover_rects.clear()
 	enemies.clear()
 	loot_items.clear()
 	player_bullets.clear()
 	enemy_bullets.clear()
 
+	_clear_node(world_layer)
 	_clear_node(player_layer)
 	_clear_node(enemy_layer)
 	_clear_node(bullet_layer)
@@ -131,15 +156,18 @@ func _new_run() -> void:
 	player = PLAYER_SCENE.instantiate()
 	player_layer.add_child(player)
 	player.global_position = Vector2(220.0, 220.0)
+	_apply_shelter_upgrades()
 	player.fired.connect(_spawn_player_bullet)
 	player.slash.connect(_handle_slash)
 
 	for i in range(18):
 		_spawn_enemy(_pick(["charger", "charger", "spitter"]), Vector2(rng.randf_range(420.0, 2700.0), rng.randf_range(360.0, 1750.0)))
 
-	for i in range(26):
+	for i in range(38):
 		_spawn_loot(_pick(["gene", "gene", "flesh", "syringe", "organ"]), Vector2(rng.randf_range(280.0, 2880.0), rng.randf_range(260.0, 1900.0)))
 
+	shelter_panel.visible = false
+	minimap.visible = true
 	mutation_panel.visible = false
 	result_panel.visible = false
 	_update_camera()
@@ -158,19 +186,36 @@ func _build_world_data() -> void:
 			"wobble": rng.randf_range(0.0, TAU),
 		})
 
-	for i in range(42):
-		props.append({
+	for i in range(76):
+		var prop := {
 			"position": Vector2(rng.randf_range(120.0, WORLD_SIZE.x - 120.0), rng.randf_range(120.0, WORLD_SIZE.y - 120.0)),
-			"size": Vector2(rng.randf_range(34.0, 88.0), rng.randf_range(22.0, 70.0)),
+			"size": Vector2(rng.randf_range(46.0, 118.0), rng.randf_range(28.0, 82.0)),
 			"rotation": rng.randf_range(-0.2, 0.2),
 			"type": _pick(["tank", "crate", "console"]),
-		})
+		}
+		props.append(prop)
+		cover_rects.append(prop)
+		_create_cover_body(prop)
 
-func _spawn_enemy(kind: String, position: Vector2, elite := false) -> void:
+func _create_cover_body(prop: Dictionary) -> void:
+	var body := StaticBody2D.new()
+	body.global_position = prop["position"]
+	body.rotation = prop["rotation"]
+	body.collision_layer = 1
+	body.collision_mask = 1
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = prop["size"]
+	shape.shape = rect
+	body.add_child(shape)
+	world_layer.add_child(body)
+
+func _spawn_enemy(kind: String, position: Vector2, elite := false, threat_override := -1.0) -> void:
 	var enemy = ENEMY_SCENE.instantiate()
 	enemy_layer.add_child(enemy)
 	enemy.global_position = position.clamp(Vector2(70.0, 70.0), WORLD_SIZE - Vector2(70.0, 70.0))
-	enemy.configure(kind, elite)
+	var threat := _threat_level() if threat_override < 0.0 else threat_override
+	enemy.configure(kind, elite, threat)
 	enemy.died.connect(_on_enemy_died)
 	enemy.shot.connect(_spawn_enemy_bullet)
 	enemy.melee_hit.connect(_on_enemy_melee_hit)
@@ -229,6 +274,11 @@ func _update_projectiles(delta: float) -> void:
 		if not is_instance_valid(bullet) or bullet.life <= 0.0:
 			player_bullets.erase(bullet)
 			continue
+		if _point_hits_cover(bullet.global_position):
+			bullet.life = 0.0
+			bullet.queue_free()
+			player_bullets.erase(bullet)
+			continue
 
 		for enemy in enemies.duplicate():
 			if not is_instance_valid(enemy):
@@ -259,6 +309,11 @@ func _update_projectiles(delta: float) -> void:
 
 	for bullet in enemy_bullets.duplicate():
 		if not is_instance_valid(bullet) or bullet.life <= 0.0:
+			enemy_bullets.erase(bullet)
+			continue
+		if _point_hits_cover(bullet.global_position):
+			bullet.life = 0.0
+			bullet.queue_free()
 			enemy_bullets.erase(bullet)
 			continue
 		if bullet.global_position.distance_to(player.global_position) <= bullet.radius + player.radius:
@@ -352,13 +407,17 @@ func _update_spawning(delta: float) -> void:
 	if spawn_timer > 0.0:
 		return
 
-	var pressure := 3.2 - clampf(erosion / 65.0, 0.0, 1.5)
-	spawn_timer = maxf(1.2, pressure)
-	if enemies.size() > 34:
+	var threat := _threat_level()
+	spawn_timer = clampf(3.4 - pow(threat + 0.4, 1.18) * 0.45, 0.85, 3.4)
+	if enemies.size() >= MAX_NORMAL_ENEMIES:
 		return
 
-	var kind = "merc" if rng.randf() < 0.18 else _pick(["charger", "charger", "spitter"])
-	_spawn_enemy(kind, _spawn_point_away_from_player(), erosion > 72.0 and rng.randf() < 0.18)
+	var spawn_count := 1 + int(threat / 2.2)
+	spawn_count = mini(spawn_count, MAX_NORMAL_ENEMIES - enemies.size())
+	for i in range(spawn_count):
+		var kind = "merc" if rng.randf() < 0.16 + minf(0.16, threat * 0.025) else _pick(["charger", "charger", "spitter"])
+		var elite_chance := clampf(0.04 + threat * 0.035, 0.04, 0.32)
+		_spawn_enemy(kind, _spawn_point_away_from_player(), rng.randf() < elite_chance)
 
 func _update_extraction(delta: float) -> void:
 	if not extraction_active:
@@ -368,11 +427,15 @@ func _update_extraction(delta: float) -> void:
 	extraction_spawn_timer -= delta
 
 	if extraction_spawn_timer <= 0.0:
-		var intensity := 0.55 + erosion / 75.0 + float(player.bag) / float(maxi(1, player.bag_capacity))
-		extraction_spawn_timer = clampf(1.25 - intensity * 0.28, 0.34, 1.2)
-		var count := int(round(rng.randf_range(1.0, 3.0 + intensity)))
-		for i in range(count):
-			_spawn_enemy(_pick(["charger", "charger", "spitter", "merc"]), _spawn_point_near_exit(), extraction_time < 18.0 and rng.randf() < 0.18)
+		var threat := _threat_level() + 1.25
+		extraction_spawn_timer = clampf(1.18 - threat * 0.09, 0.42, 1.05)
+		if enemies.size() < MAX_EXTRACTION_ENEMIES:
+			var count := int(round(rng.randf_range(2.0, 3.0 + threat * 0.55)))
+			count = mini(count, 5)
+			count = mini(count, MAX_EXTRACTION_ENEMIES - enemies.size())
+			for i in range(count):
+				var elite_chance := clampf(0.10 + threat * 0.045 + (0.18 if extraction_time < 25.0 else 0.0), 0.1, 0.44)
+				_spawn_enemy(_pick(["charger", "charger", "spitter", "merc"]), _spawn_point_near_exit(), rng.randf() < elite_chance)
 
 	if extraction_time <= 0.0:
 		_show_result(true)
@@ -402,7 +465,7 @@ func _update_hallucinations(delta: float) -> void:
 
 func _start_extraction() -> void:
 	extraction_active = true
-	extraction_time = 60.0
+	extraction_time = BASE_EXTRACT_SECONDS
 	extraction_spawn_timer = 0.1
 	state = "extracting"
 	erosion = clampf(erosion + 8.0, 0.0, 100.0)
@@ -441,14 +504,80 @@ func _show_result(win: bool) -> void:
 		return
 	state = "game_over"
 	player.active = false
+	if win:
+		banked_genes += player.genes
+		shelter_runs += 1
 	result_title.text = "撤离成功" if win else "实验体死亡"
-	result_body.text = "带回 %d 份基因碎片，进化至 %d 级。" % [player.genes, player.level] if win else "本局携带的 %d 份基因碎片与器官全部丢失。" % player.genes
+	result_body.text = "带回 %d 份基因碎片，进化至 %d 级。收益已存入避难所。" % [player.genes, player.level] if win else "本局携带的 %d 份基因碎片与器官全部丢失。" % player.genes
 	result_panel.visible = true
+
+func _show_shelter() -> void:
+	state = "shelter"
+	result_panel.visible = false
+	mutation_panel.visible = false
+	shelter_panel.visible = true
+	minimap.visible = false
+	if player != null:
+		player.queue_free()
+		player = null
+	enemies.clear()
+	loot_items.clear()
+	player_bullets.clear()
+	enemy_bullets.clear()
+	puddles.clear()
+	hallucinations.clear()
+	slashes.clear()
+	_clear_node(world_layer)
+	_clear_node(player_layer)
+	_clear_node(enemy_layer)
+	_clear_node(bullet_layer)
+	_clear_node(loot_layer)
+	_update_shelter_text()
+
+func _update_shelter_text() -> void:
+	if shelter_body == null:
+		return
+	shelter_body.text = "成功撤离：%d 次\n库存基因：%d\n\n永久升级\n生命强化：%d/5\n机动强化：%d/5\n胃袋扩容：%d/5\n\n进入深渊后，死亡会丢失本局携带物；只有撤离成功才会把基因带回避难所。" % [
+		shelter_runs,
+		banked_genes,
+		upgrade_hp_level,
+		upgrade_speed_level,
+		upgrade_bag_level,
+	]
+
+func _buy_shelter_upgrade(kind: String) -> void:
+	var cost := 30
+	if banked_genes < cost:
+		_update_shelter_text()
+		return
+
+	if kind == "hp" and upgrade_hp_level < 5:
+		upgrade_hp_level += 1
+	elif kind == "speed" and upgrade_speed_level < 5:
+		upgrade_speed_level += 1
+	elif kind == "bag" and upgrade_bag_level < 5:
+		upgrade_bag_level += 1
+	else:
+		_update_shelter_text()
+		return
+
+	banked_genes -= cost
+	_update_shelter_text()
+
+func _apply_shelter_upgrades() -> void:
+	player.max_hp += player.max_hp * 0.05 * float(upgrade_hp_level)
+	player.hp = player.max_hp
+	player.move_speed += player.move_speed * 0.03 * float(upgrade_speed_level)
+	player.bag_capacity += upgrade_bag_level
 
 func _update_camera() -> void:
 	camera.global_position = player.global_position
 
 func _update_ui() -> void:
+	if player == null:
+		_update_shelter_text()
+		return
+
 	hud["hp_bar"].value = clampf(player.hp / player.max_hp * 100.0, 0.0, 100.0)
 	hud["hp_text"].text = "%d/%d" % [maxi(0, int(round(player.hp))), int(round(player.max_hp))]
 	hud["erosion_bar"].value = erosion
@@ -466,15 +595,18 @@ func _update_ui() -> void:
 	if extraction_active:
 		hud["mission"].text = "撤离尸潮：%ds" % int(ceil(extraction_time))
 	elif player.global_position.distance_to(EXIT_POSITION) <= EXIT_RADIUS + player.radius:
-		hud["mission"].text = "净化电梯就绪：按 E 开始撤离"
+		hud["mission"].text = "净化电梯就绪：按 E 开始撤离" if _can_extract() else "电梯锁定：需要 %d 级 / %d 基因" % [MIN_EXTRACT_LEVEL, MIN_EXTRACT_GENES]
 	else:
 		var distance_to_exit := int(round(player.global_position.distance_to(EXIT_POSITION)))
-		hud["mission"].text = "目标：吞噬血肉并前往净化电梯  %dm" % distance_to_exit
+		hud["mission"].text = "目标：升到 %d 级并带 %d 基因撤离  距离 %dm" % [MIN_EXTRACT_LEVEL, MIN_EXTRACT_GENES, distance_to_exit]
 
 	if message_timer > 0.0:
-		hud["message"].text = "胃袋已满"
+		hud["message"].text = "胃袋已满，或撤离条件未满足"
 	else:
 		hud["message"].text = ""
+
+	if minimap != null and player != null:
+		minimap.setup(WORLD_SIZE, player, enemies, loot_items, EXIT_POSITION, EXIT_RADIUS)
 
 func _create_ui() -> void:
 	var layer := CanvasLayer.new()
@@ -506,6 +638,13 @@ func _create_ui() -> void:
 	hud["mission"].custom_minimum_size = Vector2(330.0, 60.0)
 	hud["mission"].add_theme_font_size_override("font_size", 18)
 	root.add_child(hud["mission"])
+
+	minimap = Control.new()
+	minimap.set_script(MINIMAP_SCRIPT)
+	minimap.position = Vector2(1038.0, 92.0)
+	minimap.custom_minimum_size = Vector2(210.0, 145.0)
+	minimap.size = Vector2(210.0, 145.0)
+	root.add_child(minimap)
 
 	hud["message"] = Label.new()
 	hud["message"].position = Vector2(570.0, 650.0)
@@ -552,9 +691,44 @@ func _create_ui() -> void:
 	result_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	result_box.add_child(result_body)
 	var restart := Button.new()
-	restart.text = "再次进入深渊"
-	restart.pressed.connect(_new_run)
+	restart.text = "返回避难所"
+	restart.pressed.connect(_show_shelter)
 	result_box.add_child(restart)
+
+	shelter_panel = PanelContainer.new()
+	shelter_panel.position = Vector2(340.0, 115.0)
+	shelter_panel.custom_minimum_size = Vector2(600.0, 440.0)
+	root.add_child(shelter_panel)
+
+	var shelter_box := VBoxContainer.new()
+	shelter_panel.add_child(shelter_box)
+	var shelter_title := Label.new()
+	shelter_title.text = "地表避难所"
+	shelter_title.add_theme_font_size_override("font_size", 30)
+	shelter_box.add_child(shelter_title)
+	shelter_body = Label.new()
+	shelter_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	shelter_box.add_child(shelter_body)
+
+	var start_run := Button.new()
+	start_run.text = "进入深渊"
+	start_run.pressed.connect(_new_run)
+	shelter_box.add_child(start_run)
+
+	var hp_upgrade := Button.new()
+	hp_upgrade.text = "生命强化 30 基因"
+	hp_upgrade.pressed.connect(_buy_shelter_upgrade.bind("hp"))
+	shelter_box.add_child(hp_upgrade)
+
+	var speed_upgrade := Button.new()
+	speed_upgrade.text = "机动强化 30 基因"
+	speed_upgrade.pressed.connect(_buy_shelter_upgrade.bind("speed"))
+	shelter_box.add_child(speed_upgrade)
+
+	var bag_upgrade := Button.new()
+	bag_upgrade.text = "胃袋扩容 30 基因"
+	bag_upgrade.pressed.connect(_buy_shelter_upgrade.bind("bag"))
+	shelter_box.add_child(bag_upgrade)
 
 func _make_bar(parent: VBoxContainer, label_text: String) -> ProgressBar:
 	var row := HBoxContainer.new()
@@ -646,3 +820,24 @@ func _pick(items: Array) -> Variant:
 
 func _angle_distance(a: float, b: float) -> float:
 	return absf(wrapf(a - b, -PI, PI))
+
+func _can_extract() -> bool:
+	return player != null and player.level >= MIN_EXTRACT_LEVEL and player.genes >= MIN_EXTRACT_GENES
+
+func _threat_level() -> float:
+	if player == null:
+		return 0.0
+	var time_factor := pow(run_time / 180.0, 1.35)
+	var erosion_factor := pow(erosion / 100.0, 1.7) * 2.2
+	var loot_factor := pow(clampf(float(player.bag) / float(maxi(1, player.bag_capacity)), 0.0, 1.0), 1.25) * 1.4
+	var level_factor := pow(float(maxi(0, player.level - 1)), 1.18) * 0.22
+	return time_factor + erosion_factor + loot_factor + level_factor
+
+func _point_hits_cover(point: Vector2) -> bool:
+	for cover in cover_rects:
+		var transform := Transform2D(float(cover["rotation"]), cover["position"])
+		var local := transform.affine_inverse() * point
+		var half_size: Vector2 = cover["size"] * 0.5
+		if absf(local.x) <= half_size.x and absf(local.y) <= half_size.y:
+			return true
+	return false

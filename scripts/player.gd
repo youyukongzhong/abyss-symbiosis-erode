@@ -17,7 +17,7 @@ var armor := 0.0
 var pierce := 0
 var crit_bonus := 0.0
 var xp := 0
-var xp_need := 60
+var xp_need := 72
 var level := 1
 var genes := 0
 var bag := 0
@@ -88,7 +88,8 @@ func has_trait(id: String) -> bool:
 
 func damage_multiplier() -> float:
 	var scale := 0.017 if has_trait("abyss_crown") else 0.012
-	return 1.0 + current_erosion * scale
+	var organ_bonus := pow(float(maxi(0, installed_organ_count() - 1)), 1.45) * 0.035
+	return 1.0 + current_erosion * scale + organ_bonus
 
 func receive_damage(amount: float, erosion_gain := 1.0) -> float:
 	var reduced := amount * (1.0 - clampf(armor, 0.0, 0.55))
@@ -99,12 +100,23 @@ func gain_xp(amount: int) -> bool:
 	xp += amount
 	if xp >= xp_need:
 		xp -= xp_need
-		xp_need = int(round(float(xp_need) * 1.34 + 18.0))
 		level += 1
+		xp_need = next_xp_need()
 		return true
 	return false
 
+func next_xp_need() -> int:
+	return int(round(70.0 + pow(float(level + 1), 2.08) * 26.0))
+
+func installed_organ_count() -> int:
+	var count := 0
+	for organ in organs.values():
+		if organ != null:
+			count += 1
+	return count
+
 func apply_mutation(mutation: Dictionary) -> void:
+	var before_count := installed_organ_count()
 	organs[mutation["slot"]] = mutation
 
 	match mutation["id"]:
@@ -144,6 +156,16 @@ func apply_mutation(mutation: Dictionary) -> void:
 			damage += 6.0
 			crit_bonus += 0.25
 			traits["abyss_crown"] = true
+
+	var after_count := installed_organ_count()
+	if before_count < 3 and after_count >= 3:
+		max_hp += 24.0
+		hp += 24.0
+		damage += 3.0
+	if before_count < 5 and after_count >= 5:
+		fire_rate += 0.8
+		armor += 0.08
+		bag_capacity += 2
 
 	queue_redraw()
 
